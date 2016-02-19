@@ -1,0 +1,7 @@
+H:\VS15\C#\smps2asm\bin\Release\smps2asm.exe.config
+H:\VS15\C#\smps2asm\bin\Release\smps2asm.exe
+H:\VS15\C#\smps2asm\bin\Release\smps2asm.pdb
+H:\VS15\C#\smps2asm\bin\Release\NCalc.dll
+H:\VS15\C#\smps2asm\obj\Release\smps2asm.exe
+H:\VS15\C#\smps2asm\obj\Release\smps2asm.pdb
+H:\VS15\C#\smps2asm\obj\Release\smps2asm.csprojResolveAssemblyReference.cache
