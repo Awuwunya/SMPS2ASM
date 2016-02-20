@@ -90,8 +90,7 @@ namespace smps2asm {
 			// create output file
 			try {
 				if (!File.Exists(fout)) {
-					FileStream f = File.Create(fout);
-					f.Close();
+					File.Create(fout).Close();
 				}
 
 				Console.WriteLine("Writing out the file...");
@@ -186,18 +185,16 @@ namespace smps2asm {
 				timer.Stop();
 				error("SMPS2ASM conversion successful! Took "+ timer.ElapsedMilliseconds +" ms!");
 			}
-
-			error("");
 		}
 
 		private static void TranslateFile() {
 			object h = sett.GetValue("header");
 			if (h != null && h.GetType() == typeof(Dic)) {
 				Console.WriteLine("Parsing header...");
-				parseAllFunctions((Dic)h);
+				parseAllFunctions2((Dic)h);
 
 			} else {
-				error("SMPS files without a header is not supported!");
+				error("SMPS files without a header are not supported!");
 			}
 
 			inHeader = false;
@@ -248,12 +245,12 @@ namespace smps2asm {
 		}
 
 		private static bool parseAllFunctions(Dic d) {
+			if (boff >= dat.Length) {
+				error("Could not resolve file: Out of file bounds (" + dat.Length + ")");
+			}
+
 			uint off = boff;
 			foreach (KeyValuePair<string, object> kv in d.GetKeyset()) {
-				if (boff >= dat.Length) {
-					error("Could not resolve header: File not large enough (" + dat.Length + ")");
-				}
-
 				parseFunction(kv.Key, kv.Value, d);
 				if(stop) return false;
 				if (!inHeader && boff != off) return true;
@@ -265,7 +262,7 @@ namespace smps2asm {
 		private static void parseAllFunctions2(Dic d) {
 			foreach (KeyValuePair<string, object> kv in d.GetKeyset()) {
 				if (boff >= dat.Length) {
-					error("Could not resolve header: File not large enough (" + dat.Length + ")");
+					error("Could not resolve file: Out of file bounds (" + dat.Length + ")");
 				}
 
 				parseFunction(kv.Key, kv.Value, d);
@@ -691,8 +688,7 @@ namespace smps2asm {
 			lables.Add(new OffsetString(pos, 0, lable));
 		}
 
-		private static void parseSettings(string data, string[]
-			args) {
+		private static void parseSettings(string data, string[] args) {
 			int lnum = 0;
 			sett = new Dic(new Dictionary<string, object>());
 
