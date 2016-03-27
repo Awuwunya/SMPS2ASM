@@ -97,7 +97,7 @@ namespace smps2asm {
 				string o = name + "_Header:\r\n\tsmpsHeaderStartSong\r\n", currLine = "";
 				uint currLineArg = 0, nxtchk = 0;
 				bool lastwaslable = true;
-				for (int x = (int) offset;x <= offset + dat.Length;x++) {
+				for (int x = (int) offset;x < offset + dat.Length;x++) {
 					OffsetString ln = new OffsetString(ulong.MaxValue, 1, "<<<<<<<<<<<");
 					foreach (OffsetString o1 in lines) {
 						if ((int) o1.offset == x && !ln.line.Equals(o1.line)) {
@@ -136,7 +136,6 @@ namespace smps2asm {
 							currLine = "\t; Unused\r\n\tdc.b ";
 
 						} else if (currLineArg >= 8) {
-
 							o += currLine.Substring(0, currLine.Length - 2) + "\r\n";
 							currLineArg = 0;
 							currLine = "\tdc.b ";
@@ -217,7 +216,7 @@ namespace smps2asm {
 							skipByte(i);
 						}
 
-						OutLine(i + offset, 25, ox.Substring(0, ox.Length - 2));
+						OutLine(i + offset - 24, 25, ox.Substring(0, ox.Length - 2));
 					}
 				}
 			}
@@ -399,7 +398,7 @@ namespace smps2asm {
 				value = toHexString(r, 2);
 			}
 
-			OutLine((uint) (offset + boff), 1, "db "+ value);
+			OutLine(offset + boff, 1, "db "+ value);
 		}
 
 		private static bool checkMacroArgs(Macro m) {
@@ -553,10 +552,10 @@ namespace smps2asm {
 			string endian = ((Equate) ((Dic) sett.GetValue("dat")).GetValue("endian")).raw;
 
 			if (endian.Equals("\"little\"")) {
-				return (ushort) ((ReadByte(off)) | ((ReadByte(off) << 8)));
+				return (ushort) ((ReadByte(off)) | ((ReadByte(off + 1) << 8)));
 
 			} else if (endian.Equals("\"big\"")) {
-				return (ushort)(((ReadByte(off) << 8)) | (ReadByte(off)));
+				return (ushort)(((ReadByte(off) << 8)) | (ReadByte(off + 1)));
 
 			} else {
 				error("Could not resolve endianness '" + endian.Replace("\"", "") + "'");
