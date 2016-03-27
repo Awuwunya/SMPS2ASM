@@ -142,7 +142,7 @@ namespace smps2asm {
 							currLine = "\tdc.b ";
 						}
 						
-						currLine += toHexString(ReadByte((uint)x), 2) +", ";
+						currLine += toHexString(ReadByte((uint)(x - offset)), 2) +", ";
 						currLineArg++;
 					}
 
