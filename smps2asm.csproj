@@ -64,9 +64,12 @@
     <Compile Include="ArgMod.cs" />
     <Compile Include="ChangeLable.cs" />
     <Compile Include="Command.cs" />
+    <Compile Include="Comment.cs" />
     <Compile Include="Condition.cs" />
     <Compile Include="Dic.cs" />
     <Compile Include="Equate.cs" />
+    <Compile Include="EquateChange.cs" />
+    <Compile Include="Goto.cs" />
     <Compile Include="Macro.cs" />
     <Compile Include="OffsetString.cs" />
     <Compile Include="Program.cs" />
