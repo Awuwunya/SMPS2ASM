@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 namespace smps2asm {
 	class Macro : Dic {
 		public string[] arguments { get; }
-		private byte[] flags;
+		public byte[] flags { get; }
 		private string macro;
 
 		public Macro(byte[] flag, string name, string[] args, object d) : base(d) {

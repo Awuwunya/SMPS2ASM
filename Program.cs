@@ -12,32 +12,63 @@ using System.Diagnostics;
 namespace smps2asm {
 	class Program {
 		public static Dic sett;
-		public static string name, lblparent = null;
+		public static string name, lblparent = null, defl = "", fout;
 		public static List<OffsetString> lines, lables;
 		public static uint offset = 0, boff = 0;
 		public static byte[] dat;
 		public static bool[] skippedBytes;
-		public static bool followlable = false, inHeader = true, stop = false;
+		public static bool followlable = false, inHeader = true, stop = false, debug = false;
 		private static Dic[] currDics;
 
 		static void Main(string[] args) {
 			Stopwatch timer = null;
 			bool cmd;
-			string settings, fout, fin, 
+			string settings, fin, 
 				folder = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(System.Environment.CurrentDirectory), @""));
 
 			// no commandline arguments, get arguments from user
 			if (args.Length == 0) {
 				cmd = false;
-				fin = folder +"\\music\\"+ GetInput("tell the music file name with extension");
-				settings = folder + "\\" + GetInput("\ntell the sound driver folder name") + "\\smps2asm script.asm";
+				fin = folder + "\\music\\" + GetInput("tell the music file name with extension");
+				string fld = GetInput("\ntell the sound driver folder name");
+
+				if (fld.Contains('.')) {
+					settings = folder + "\\" + fld.Split('.')[0] + "\\smps2asm script."+ fld.Split('.')[1] + ".asm";
+
+				} else {
+					settings = folder + "\\" + fld + "\\smps2asm script.asm";
+				}
+
 				name = GetInput("\ntell the project name");
 
 			// 3 or more commandline argumets, get arguments from the commandline
 			} else if(args.Length >= 3) {
+				while (args[0].StartsWith("-")) {
+					switch (args[0].ElementAt(1)) {
+						case 'd':
+							debug = !debug;
+							break;
+
+						default:
+							System.Console.WriteLine("Warn: Flag '-" + args[0].ElementAt(1) + "' does not exist!");
+							break;
+					}
+
+					// remove first argument.
+					args = args.Skip(1).ToArray();
+				}
+
+
 				cmd = true;
 				fin = folder + "\\music\\" + args[0];
-				settings = folder + "\\" + args[1] +"\\smps2asm script.asm";
+
+				if (args[1].Contains('.')) {
+					settings = folder + "\\" + args[1].Split('.')[0] + "\\smps2asm script." + args[1].Split('.')[1] + ".asm";
+
+				} else {
+					settings = folder + "\\" + args[1] + "\\smps2asm script.asm";
+				}
+
 				name = args[2];
 
 			// 1 or 2 arguments, show usage to user
@@ -66,17 +97,23 @@ namespace smps2asm {
 
 			// parse settings file
 			try {
+				string z = "";
+				foreach(string s in args) {
+					z += ", " + s;
+				}
+
+				dt("Arguments in current run '"+ z.Substring(2) +"'");
+				dt("Parsing script at '"+ settings + "'");
 				Console.WriteLine("Parsing script...");
 				parseSettings(File.ReadAllText(settings).Replace("\t", "").Replace("\r", ""), args.Skip(3).ToArray());
 			} catch (Exception e) {
 				error("Could not parse script: ", e);
 			}
 			
-			if (!cmd) {
-				timer = new Stopwatch();
-				timer.Start();
-			}
-
+			// start new timer
+			timer = new Stopwatch();
+			timer.Start();
+			// create some other objects
 			lables = new List<OffsetString>();
 			lines = new List<OffsetString>();
 
@@ -84,6 +121,7 @@ namespace smps2asm {
 			try {
 				if (((Dic) sett.GetValue("dat")).ContainsKey("offset")) {
 					offset = parseUInt((string) ((Dic) sett.GetValue("dat")).GetValue("offset"), -1);
+					dt("Data offset set to '"+ toHexString(offset, 4) +"'");
 				}
 				
 				// read all bytes from input file
@@ -91,11 +129,22 @@ namespace smps2asm {
 				// create array of bools which determines if byte is skipped or not.
 				skippedBytes = new bool[dat.Length];
 				// Now, translate the file into data lines of code.
+				dt("Input file size is " + dat.Length +" ("+ toHexString(dat.Length, 8) + ")");
 				TranslateFile();
 
 			} catch (Exception e) {
 				error("Could not read input file: ", e);
 			}
+			
+			// write info about how long it took to translate file
+			timer.Stop();
+			long tra = timer.ElapsedMilliseconds;
+			Console.WriteLine("Input File translated! Took "+ tra +" ms!");
+			dt("Translation took "+ tra +" ms");
+
+			// restart timer
+			timer.Reset();
+			timer.Start();
 
 			// here, we write out the file, check for unused bytes, and create lables.
 			try {
@@ -104,6 +153,7 @@ namespace smps2asm {
 				}
 
 				Console.WriteLine("Writing out the file...");
+				dt("File write started");
 				// default starting string is as follows:
 				/*
 					[name]_Header:
@@ -122,19 +172,24 @@ namespace smps2asm {
 
 				// now starts the main loop which will search for all the lables
 				for (int x = (int) offset;x < offset + dat.Length;x++) {
+					bool linechanged = false;
 					// fake line to be replaced by current line when done. Used to also check if 2 different lines overlap
-					OffsetString ln = new OffsetString(ulong.MaxValue, 1, "<<<<<<<<<<<");
+					OffsetString ln = new OffsetString(ulong.MaxValue, 1, ">>>>>>>>>>>>>>>");
+
 					foreach (OffsetString o1 in lines) {
 						// check if this line should go here
 						if ((int) o1.offset == x && !ln.line.Equals(o1.line)) {
 							// checks if there is another line found already. Warns the user if so
 							if (ln.length > 0 && (ulong)x == ln.offset) {
 								Console.WriteLine("Warning: Could not decide line at " + toHexString(x, 4) + "! '" + ln.line + "' vs '" + o1.line + "'");
+								dt("Conflict at "+ toHexString(x, 4) + " '"+ ln.line + "' vs '"+ o1.line + "'");
 							}
 
 							ln = o1;
+							linechanged = true;
 							// check if this is data
 							if (o1.line.StartsWith("db ")) {
+								dt("Data at "+ toHexString(x, 4) +", arg# "+ currLineArg +"', data "+ o1.line.Substring(3));
 								// if there were not already data line started, start a new one
 								if (currLineArg == 0) {
 									currLine = "\tdc.b ";
@@ -153,6 +208,7 @@ namespace smps2asm {
 							} else {
 								// split byte line if there was one
 								if (currLineArg > 0) {
+									dt("Split data with "+ currLineArg +" bytes");
 									o += currLine.Substring(0, currLine.Length - 2) + "\r\n";
 									currLineArg = 0;
 								}
@@ -160,6 +216,7 @@ namespace smps2asm {
 								// add the line to file
 								o += o1.line + "\r\n";
 								lastwaslable = false;
+								dt(o1.line);
 							}
 						}
 					}
@@ -167,44 +224,58 @@ namespace smps2asm {
 					// checks if no line was found for this byte,
 					// last line did not have its bytes extend here,
 					// and this byte was not in skipped bytes list
-					if (ln.line.Equals("<<<<<<<<<<<") && x >= nxtchk && !skippedBytes[x - offset]) {
+					if (!linechanged && x >= nxtchk && !skippedBytes[x - offset]) {
 						if (currLineArg == 0) {
+							// if no bytes exist yet, note this as unused bytes and start line
 							currLine = "\t; Unused\r\n\tdc.b ";
 
 						} else if (currLineArg >= 8) {
+							// if there are 8 bytes in line, split the line and start new one
 							o += currLine.Substring(0, currLine.Length - 2) + "\r\n";
 							currLineArg = 0;
 							currLine = "\tdc.b ";
 						}
-						
-						currLine += toHexString(ReadByte((uint)(x - offset)), 2) +", ";
+
+						// add a byte to the line
+						string z = toHexString(ReadByte((uint) (x - offset)), 2);
+						dt("Unused at " + toHexString(x, 4) + ", arg# " + currLineArg + "', data " + z);
+						currLine += z +", ";
 						currLineArg++;
 					}
 
+					// check if any lables are placed at the offset
 					foreach (OffsetString o1 in lables) {
 						if ((int) o1.offset == x + 1) {
+							// split bytes of there are any.
 							if (currLineArg > 0) {
+								dt("Split data with " + currLineArg + " bytes");
 								o += currLine.Substring(0, currLine.Length - 2) + "\r\n";
 								currLineArg = 0;
 							}
 
+							// checks if last line also was a lable. Adds extra line break if not
 							if (lastwaslable) {
 								o += o1.line + "\r\n";
 
 							} else {
 								o += "\r\n" + o1.line + "\r\n";
+								lastwaslable = true;
 							}
 
-							lastwaslable = true;
+							dt("Lable at " + toHexString((int)o1.offset, 4) +"', name " + o1.line);
 						}
 					}
 
-					if (!ln.line.Equals("<<<<<<<<<<<") && ln.length > 0) {
+					// if line was found, do not check for unused bytes until the line's bytecount is up
+					if (linechanged && ln.length > 0) {
 						nxtchk = (uint)((uint)x + ln.length);
+						dt("Next unused check at "+ toHexString((int) nxtchk, 4));
 					}
 				}
 
+				// write this to the out file
 				File.WriteAllText(fout, o);
+				dt("File writeout successful");
 
 			} catch (UnauthorizedAccessException) {
 				error("Could not create output file: Insufficient permissions");
@@ -216,35 +287,62 @@ namespace smps2asm {
 				error("Could not create output file: ", e);
 			}
 
+			// write information about how long it took (debugging purposes)
+			timer.Stop();
+			if (debug) {
+				dt("File writeout successful in " + timer.ElapsedMilliseconds + " ms");
+				dt("Total time is " + (timer.ElapsedMilliseconds + tra) + " ms");
+				wd();
+			}
+
+			Console.WriteLine("Wrote output file! Took " + timer.ElapsedMilliseconds + " ms!");
 			if (!cmd) {
-				timer.Stop();
-				error("SMPS2ASM conversion successful! Took "+ timer.ElapsedMilliseconds +" ms!");
+				error("SMPS2ASM conversion successful! Took "+ (timer.ElapsedMilliseconds + tra) +" ms!");
+
+			} else {
+				Console.WriteLine("SMPS2ASM conversion successful! Took " + (timer.ElapsedMilliseconds + tra) + " ms!");
 			}
 		}
 
 		private static void TranslateFile() {
+			dt("Starting file translation");
+			// first parse header
 			object h = sett.GetValue("header");
 			if (h != null && h.GetType() == typeof(Dic)) {
+				// found valid header, parse!
 				Console.WriteLine("Parsing header...");
+				dt("Parsing header");
 				parseAllFunctions2((Dic)h);
 
 			} else {
+				// did not find valid header
 				error("SMPS files without a header are not supported!");
 			}
 
+			// setup the stuffs!
 			inHeader = false;
 			followlable = true;
+			dt("Header parsed, parsing all found lables");
+
+			// parse all of the lables we found in header
 			foreach (OffsetString o in lables.ToArray()) {
 				Console.WriteLine("Parsing " + o.line + "...");
 				if (o.line.Contains("DAC")) {
+					// if DAC code, use DAC variables and coordination flags
 					boff = (uint) (o.offset - offset);
+					dt("Parsing DAC data '"+ o.line + "' at "+ toHexString(boff, 4));
 					parseInput(new Dic[] { sett.GetValue("coordination") as Dic, sett.GetValue("DAC") as Dic });
 
 				} else if (o.line.Contains("FM") || o.line.Contains("PSG")) {
+					// if FM or PSG code, use note variables and coordination flags
 					boff = (uint) (o.offset - offset);
+					dt("Parsing "+ (o.line.Contains("FM") ? "FM" : "PSG") +" data '" + o.line + "' at " + toHexString(boff, 4));
 					parseInput(new Dic[] { sett.GetValue("coordination") as Dic, sett.GetValue("note") as Dic });
 
 				} else if (o.line.Contains("Voices")) {
+					// set current file offset, too
+					boff = (uint) (o.offset - offset);
+					dt("Parsing Voice data '" + o.line + "' at " + toHexString((int) boff, 4));
 					// find the closest lable after the voices lable. Fixes Voices overflowing to other SMPS code
 					// this happens in WOI music, when voices are before the SMPS code
 					ulong loff = 0xFFFFFFFFFFFFFFFF;
@@ -253,15 +351,17 @@ namespace smps2asm {
 							loff = of.offset;
 						}
 					}
-
 					// this converts the Z80 offset to offset in input file. In 68k offset is 0 so its not affected.
 					loff -= offset;
+					dt("Found next lable at " + toHexString((int) loff, 4));
 
-					boff = (uint)(o.offset - offset);
 					for (uint i = boff;i < dat.Length && i < loff;) {
+						dt("Parsing voice at " + toHexString((int) boff, 4));
+						// parse all function in Voices
 						parseAllFunctions2(sett.GetValue("Voices") as Dic);
 						// this simply marks all the bytes as unused. Not worth the headache to fix this properly
 						for (;i < boff;i ++) skippedBytes[i] = true;
+						// set counter to current offset
 						i = boff;
 					}
 				}
@@ -292,8 +392,10 @@ namespace smps2asm {
 		private static bool parseAllFunctions(Dic d) {
 			if (boff >= dat.Length) {
 				// havent tested this properly, so having warning for now
-				Console.WriteLine("WARN: Checkings functions after end of SMPS file! (size: " + dat.Length + ", offset: "+ boff +") Please report to Natsumi if this causes a crash!");
-		//		error("Could not resolve file: Out of file bounds (size: " + dat.Length + ", offset: "+ boff +')');
+				Console.WriteLine("WARN: Checking functions after end of SMPS file! (size: " + dat.Length + ", offset: "+ boff +") Please report to Natsumi if this causes a crash!");
+				//		error("Could not resolve file: Out of file bounds (size: " + dat.Length + ", offset: "+ boff +')');
+				dt("WARN: Checking functions after énd of file at " + toHexString((int) boff, 4));
+
 			}
 
 			uint off = boff;
@@ -307,6 +409,7 @@ namespace smps2asm {
 		}
 
 		private static void parseAllFunctions2(Dic d) {
+			dt("Parsing functions at " + toHexString((int) boff, 4));
 			foreach (KeyValuePair<string, object> kv in d.GetKeyset()) {
 				parseFunction(kv.Key, kv.Value, d, false);
 			}
@@ -318,6 +421,7 @@ namespace smps2asm {
 				// parse equate
 				Equate v = (Equate) value;
 				if (!v.calculated) v.calc();
+				d('='+ key +' '+ v.value);
 
 				if (writeEqu && ReadByte(boff) == v.value) {
 					PutOnLine(key);
@@ -327,7 +431,7 @@ namespace smps2asm {
 
 			} else if (value.GetType() == typeof(EquateChange)) {
 				// change equate value
-				Equate e = parent.GetValue(((EquateChange) value).name) as Equate;
+				Equate e = FindEquate(((EquateChange) value).name, sett);
 				if(e == null) {
 					error("Could not resolve file: Could not find equate '"+ ((EquateChange) value).name + "'!");
 				}
@@ -335,32 +439,42 @@ namespace smps2asm {
 				// plop the new value in and calculate it!
 				e.raw = ((EquateChange) value).value;
 				e.calc();
+				d("==" + ((EquateChange) value).name + " " + e.value);
 
 			} else if (value.GetType() == typeof(Condition)) {
 				// condition
 				Condition v = (Condition) value;
+				d("¤ " + TranslateAllAbstract(v.GetCondition()) +" {");
 				if (parseBool(v.GetCondition(), -1)) {
 					parseAllFunctions2(v.True);
+					d("}");
 
 				} else {
+					d("} {");
 					parseAllFunctions2(v.False);
+					d("}");
 				}
 
 			} else if (value.GetType() == typeof(Command)) {
 				// we just need to emulate a translation, and then ignore the result!
 				// easy right? Just remember to not use 'aw' or 'ow', that will screw things up!
+				d("$ " + ((Command) value).command);
 				TranslateAllAbstract(((Command) value).command);
 
 			} else if (value.GetType() == typeof(Repeat)) {
 				// repeat block
 				Repeat v = (Repeat) value;
-				for(int i = 0; i < parseLong(v.times, -1);i++) {
+				long t = parseLong(v.times, -1);
+				d("* " + t + " {");
+				for (long i = 0; i < t;i++) {
+					d("*" + i);
 					parseAllFunctions2(v);
 				}
 
 			} else if (value.GetType() == typeof(ChangeLable)) {
 				// change lable format
-				lblparent = ((ChangeLable) value).lable;
+				d("~" + TranslateAllAbstract(((ChangeLable) value).lable));
+				lblparent = TranslateAllAbstract(((ChangeLable) value).lable);
 
 			} else if (value.GetType() == typeof(Comment)) {
 				// insert a comment
@@ -379,7 +493,8 @@ namespace smps2asm {
 						ln = ln.Substring(0, i - 1) + res + ln.Substring(l + 1);
 					}
 				}
-
+				
+				d("%" + ln);
 				AddLable(xoff + offset,'\t' + ln.Replace("\\t", "\t").Replace("\\n", "\n").Replace("\\r", "\r"));
 
 			} else if (value.GetType() == typeof(Goto)) {
@@ -406,6 +521,8 @@ namespace smps2asm {
 						error("Could not resolve file: Go to type '"+ ((Goto) value).dir + "' not recognized!");
 						break;
 				}
+
+				d("> " + boff);
 
 			} else if (value.GetType() == typeof(Macro) && checkMacroArgs((Macro)value)) {
 				// macro block
@@ -450,14 +567,26 @@ namespace smps2asm {
 				} else {
 					comment = "\t; " + comment;
 				}
-				
-				if (arg.Length > 2) {
-					OutLine((uint) (offset + xoff), boff - xoff, "\t" + v.getName() + "\t" + arg.Substring(2) + comment);
 
-				} else {
-					OutLine((uint) (offset + xoff), boff - xoff, "\t" + v.getName() + "\t" + arg + comment);
+				if (arg.Length > 2) {
+					arg = arg.Substring(2);
 				}
-				
+
+				OutLine((uint) (offset + xoff), boff - xoff, "\t" + v.getName() + "\t" + arg + comment);
+
+				if (debug) {
+					string a = "";
+					foreach(byte s in v.flags) {
+						a += ", " + toHexString(s, 2);
+					}
+					
+					if(a.Length > 2) {
+						a = a.Substring(2);
+					}
+
+					d("!" + a +" "+ v.getName() + " "+ arg +";");
+				}
+
 				parseAllFunctions(v);
 
 			} else if (value.GetType() == typeof(ArgMod)) {
@@ -467,10 +596,11 @@ namespace smps2asm {
 				int i = ln.line.LastIndexOf('\t') + 1;
 				string[] args = ln.line.Substring(i, ln.line.Length - i).Split(',');
 
-				if (v.ID < args.Length) {
-					string x = FindValue(parseLong(args[v.ID].Replace("$", "0x"), -1), v);
+				if (v.ID < args.Length && v.ID >= 0) {
+					string x = FindValue(parseLong(args[v.ID].Replace("$", "0x"), -1), v), y = args[v.ID];
 					if (x != null && x.Length > 0) {
-						args[v.ID] = " "+ x;
+						if(v.ID != 0) x = " "+ x;
+						args[v.ID] = x;
 					}
 
 					string o = ln.line.Substring(0, i);
@@ -480,15 +610,21 @@ namespace smps2asm {
 					}
 
 					ln.line = o.Substring(0, o.Length - 1);
+					d("#"+ v.ID +" " + y + " " + x.Replace(" ", ""));
 
 				} else {
-					error("Not enough arguments in target function; "+ v.ID +" expected, "+ args.Length +" found!");
+					if (v.ID < 0) {
+						error("Negative argument number; " + v.ID + "!");
+
+					} else {
+						error("Not enough arguments in target function; " + v.ID + " expected, " + args.Length + " found!");
+					}
 				}
 
 			} else if (value.GetType() == typeof(Stop)) {
+				d(";");
 				stop = true;
 				return;
-
 			}
 		}
 
@@ -518,15 +654,15 @@ namespace smps2asm {
 			return "%" + Convert.ToString(res, 2).PadLeft(zeroes);
 		}
 
-		private static string FindEquate(string name, Dic d) {
+		private static Equate FindEquate(string name, Dic d) {
 			foreach (KeyValuePair<string, object> kv in d.GetKeyset()) {
 				if (kv.Value.GetType() == typeof(Dic)) {
-					string r = FindEquate(name, kv.Value as Dic);
+					Equate r = FindEquate(name, kv.Value as Dic);
 					if (r != null) return r;
 
 				} else if (name.Equals(kv.Key)) {
 					if (!((Equate) kv.Value).calculated) ((Equate) kv.Value).calc();
-					return ""+ ((Equate) kv.Value).value;
+					return((Equate) kv.Value);
 
 				}  
 			}
@@ -537,7 +673,7 @@ namespace smps2asm {
 		private static string FindValue(long val, Dic d) {
 			foreach (KeyValuePair<string, object> kv in d.GetKeyset()) {
 				if (kv.Value.GetType() == typeof(Dic)) {
-					string r = FindEquate(name, kv.Value as Dic);
+					string r = FindValue(val, kv.Value as Dic);
 					if (r != null) return r;
 
 				} else if (kv.Value.GetType() == typeof(Equate)) {
@@ -562,13 +698,14 @@ namespace smps2asm {
 
 				while (s.Contains("\\")) {
 					int i = s.IndexOf("\\") + 1, o = s.IndexOf("\\", i);
-					string tr = FindEquate(s.Substring(i, o - i), sett);
+					Equate tr = FindEquate(s.Substring(i, o - i), sett);
 
 					if (tr == null) {
 						error("Could not find equate '" + s.Substring(i, o - i) + "'");
 					}
 
-					s = s.Substring(0, i - 1) + parseLong(tr, -1) + s.Substring(o + 1, s.Length - o - 1);
+					if(!tr.calculated) tr.calc();
+					s = s.Substring(0, i - 1) + tr.value + s.Substring(o + 1, s.Length - o - 1);
 				}
 
 				return s;
@@ -683,9 +820,11 @@ namespace smps2asm {
 				error("Could not resolve endianness '" + endian.Replace("\"", "") + "'");
 				return null;
 			}
+			
+			while (hasLable(lblparent.Replace("#", "" + (++x)) + ':', pos));
+			string o = lblparent.Replace("#", "" + x);
+			AddLable(pos, o +':');
 
-			while (hasLable(lblparent.Replace("#", "" + (++x) + ':'), pos));
-			AddLable(pos, lblparent.Replace("#", "" + x) + ':');
 			if (followlable && pos - offset >= boff) {
 				uint coff = boff;
 				boff = pos - offset;
@@ -693,7 +832,8 @@ namespace smps2asm {
 				boff = coff;
 			}
 
-			return lblparent.Replace("#", "" + x);
+			dt("Lable '" + o + "' from " + toHexString(boff + offset, 4) + " points to " + toHexString(pos, 4));
+			return o;
 		}
 
 		private static string ReadWordOff(uint off) {
@@ -713,8 +853,9 @@ namespace smps2asm {
 				return null;
 			}
 
-			while (hasLable(lblparent.Replace("#", "" + (++x) + ':'), pos));
-			AddLable(pos, lblparent.Replace("#", "" + x) + ':');
+			while (hasLable(lblparent.Replace("#", "" + (++x)) + ':', pos));
+			string o = lblparent.Replace("#", "" + x);
+			AddLable(pos, o +':');
 
 			if (followlable && pos >= boff) {
 				uint coff = boff;
@@ -723,7 +864,8 @@ namespace smps2asm {
 				boff = coff;
 			}
 
-			return lblparent.Replace("#", "" + x);
+			dt("Lable '" + o + "' from " + toHexString(boff + offset, 4) + " points to " + toHexString(pos, 4));
+			return o;
 		}
 
 		private static string ReadWordHdr(uint off) {
@@ -743,8 +885,9 @@ namespace smps2asm {
 				return null;
 			}
 
-			while (hasLable(lblparent.Replace("#", "" + (++x) + ':'), pos));
-			AddLable(pos, lblparent.Replace("#", "" + x) +':');
+			while (hasLable(lblparent.Replace("#", "" + (++x)) + ':', pos));
+			string o = lblparent.Replace("#", "" + x);
+			AddLable(pos, o +':');
 
 			if (followlable && pos >= boff) {
 				uint coff = boff;
@@ -753,7 +896,8 @@ namespace smps2asm {
 				boff = coff;
 			}
 
-			return lblparent.Replace("#", "" + x);
+			dt("Lable '" + o + "' from " + toHexString(boff + offset, 4) + " points to " + toHexString(pos, 4));
+			return o;
 		}
 
 		private static int ReadLong(uint off) {
@@ -800,9 +944,19 @@ namespace smps2asm {
 			stack.AddFirst(sett);
 
 			bool inCondition = false, isTrue = false;
-			Condition co = null;
+			LinkedList<Condition> co = new LinkedList<Condition>();
+			int tabc = 0;
+			string tab = "";
 			foreach(string line in data.Split('\n')) {
 				lnum++; // keep count of line number
+				if (debug) {
+					tab = "";
+					for(int i = 0;i < tabc;i++) {
+						tab += '\t';
+					}
+
+					if(tab.Length == 0) tab = " ";
+				}
 
 				if (line.Length > 0) {
 					switch (line.ElementAt(0)) {
@@ -814,26 +968,53 @@ namespace smps2asm {
 							stack.RemoveFirst();
 							if (inCondition && isTrue && line.EndsWith("{")) {
 								isTrue = !isTrue;
-								stack.AddFirst(co.False);
+								stack.AddFirst(co.First.Value.False);
+
+								if (debug) {
+									tab = "";
+									for (int i = 1;i < tabc;i++) {
+										tab += '\t';
+									}
+
+									if (tab.Length == 0) tab = " ";
+									d(lnum + ':'+ tab +"} {");
+								}
+
+							} else {
+								// pop first from the condition stack
+								if(co.Count > 0) co.RemoveFirst();
+								if (debug) {
+									tabc--;
+									tab = "";
+
+									for (int i = 0;i < tabc;i++) {
+										tab += '\t';
+									}
+
+									if (tab.Length == 0) tab = " ";
+									d(lnum + ':' + tab + '}');
+								}
 							}
 							break;
 
 						case '=':
 							try {
-								string name = line.Substring(1, line.IndexOf(' ') - 1);
-								if (stack.ElementAt(0).ContainsKey(name)) {
+								string name = line.Substring(1, line.IndexOf(' ') - 1), l = line.Substring(line.IndexOf(' ') + 1);
+								if (FindEquate(name, stack.ElementAt(stack.Count - 2)) != null) {
 									// HACK WARNING: Create an element to change the value of pre-existing equate.
 									// had to do this so no element tries to double-define itself and cause crash.
 									// yes it is very hacky but it also works, so fuck off.
-									stack.ElementAt(0).Add("EquChange "+ lnum, new EquateChange(name, line.Substring(line.IndexOf(' ') + 1)));
+									stack.First.Value.Add("EquChange "+ lnum, new EquateChange(name, l));
+									d(lnum + ':'+ tab + "==" + name + ' ' + l);
 
 								} else {
 									// attempt to add an item to the Dictionary
-									stack.ElementAt(0).Add(name, new Equate(line.Substring(line.IndexOf(' ') + 1)));
+									stack.First.Value.Add(name, new Equate(l));
+									d(lnum + ':'+ tab +'=' + name +' '+ l);
 								}
 
 							} catch (Exception e) {
-								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.ElementAt(0) + "'! ", e);
+								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.First.Value + "'! ", e);
 							}
 							break;
 
@@ -844,11 +1025,14 @@ namespace smps2asm {
 
 							Dic d1 = new Dic(new Dictionary<string, object>());
 							try {
-								stack.ElementAt(0).Add(line.Substring(1, line.IndexOf(' ') - 1), d1);
+								string name = line.Substring(1, line.IndexOf(' ') - 1);
+								stack.First.Value.Add(name, d1);
 								stack.AddFirst(d1);
+								d(lnum + ':'+ tab +'?' + name +" {");
+								tabc++;
 
 							} catch(Exception e) {
-								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.ElementAt(0) + "'! ", e);
+								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.First.Value + "'! ", e);
 							}
 							break;
 
@@ -861,11 +1045,14 @@ namespace smps2asm {
 								string[] arguments = line.Replace(" ", "").Substring(argi + 1, endi - argi - 1).Split(',');
 
 								Macro d2 = new Macro(flags, nam.Replace("%", ""), arguments, new Dictionary<string, object>());
-								stack.ElementAt(0).Add(nam, d2);
+								stack.First.Value.Add(nam, d2);
 
 								if (line.EndsWith("{")) {
 									stack.AddFirst(d2);
+									tabc++;
 								}
+
+								d(lnum + ':'+ tab + line);
 
 							} catch(Exception e) {
 								error("smps2asm script.asm:Line " + lnum + ": Could not parse line! ", e);
@@ -873,23 +1060,26 @@ namespace smps2asm {
 							break;
 
 						case '@':
-							string lable = line.Substring(1, line.IndexOf(' ') - 1), ln;
-							long num = parseLong(line.Substring(lable.Length + 2, line.IndexOf(' ', lable.Length + 2) - (lable.Length + 2)), lnum);
-
-							if(args.Length <= num) {
-								int i = line.IndexOf('"') + 1;
-								ln = GetInput(line.Substring(i, line.LastIndexOf('"') - i));
-
-							} else {
-								ln = args[num];
-							}
-							
 							try {
+								string lable = line.Substring(1, line.IndexOf(' ') - 1), ln;
+								long num = parseLong(line.Substring(lable.Length + 2, line.IndexOf(' ', lable.Length + 2) - (lable.Length + 2)), lnum);
+								int i = line.IndexOf('"') + 1;
+								string ask = line.Substring(i, line.LastIndexOf('"') - i);
+
+								if (args.Length <= num) {
+									ln = GetInput(ask);
+
+								} else {
+									ln = args[num];
+								}
+							
 								// attempt to add an item to the Dictionary
-								stack.ElementAt(0).Add(lable, ln);
+								stack.First.Value.Add(lable, ln);
+								d(lnum + ':'+ tab +'@' + lable +' '+ num +' '+ ask);
+								d(lnum + ':'+ tab +'=' + lable + ' ' + ln);
 
 							} catch (Exception e) {
-								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.ElementAt(0) + "'! ", e);
+								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.First.Value + "'! ", e);
 							}
 							break;
 
@@ -898,11 +1088,13 @@ namespace smps2asm {
 								int id = Int32.Parse(line.Substring(1, line.Replace(" ", "").IndexOf('{')));
 								ArgMod ar = new ArgMod(new Dictionary<string, object>(), id);
 								// attempt to add an item to the Dictionary
-								stack.ElementAt(0).Add("ARG "+ id, ar);
+								stack.First.Value.Add("ARG "+ id, ar);
 								stack.AddFirst(ar);
+								d(lnum + ':'+ tab +'#' + id +" {");
+								tabc++;
 
 							} catch (Exception e) {
-								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.ElementAt(0) + "'! ", e);
+								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.First.Value + "'! ", e);
 							}
 							break;
 
@@ -910,11 +1102,13 @@ namespace smps2asm {
 							try {
 								Repeat re = new Repeat(line.Substring(2, line.LastIndexOf(' ') - 2), new Dictionary<string, object>());
 								// attempt to add an item to the Dictionary
-								stack.ElementAt(0).Add("REPT " + lnum, re);
+								stack.First.Value.Add("REPT " + lnum, re);
 								stack.AddFirst(re);
+								d(lnum + ':'+ tab + line);
+								tabc++;
 
 							} catch (Exception e) {
-								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.ElementAt(0) + "'! ", e);
+								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.First.Value + "'! ", e);
 							}
 							break;
 
@@ -923,9 +1117,10 @@ namespace smps2asm {
 								Command comm = new Command(line.Substring(2));
 								// attempt to add an item to the Dictionary
 								stack.ElementAt(0).Add("COMM " + lnum, comm);
+								d(lnum + ':'+ tab + line);
 
 							} catch (Exception e) {
-								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.ElementAt(0) + "'! ", e);
+								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.First.Value + "'! ", e);
 							}
 							break;
 
@@ -933,10 +1128,11 @@ namespace smps2asm {
 							try {
 								ChangeLable comm = new ChangeLable(line.Substring(1).Replace("£", name));
 								// attempt to add an item to the Dictionary
-								stack.ElementAt(0).Add("LABL " + lnum, comm);
+								stack.First.Value.Add("LABL " + lnum, comm);
+								d(lnum + ':'+ tab +'~' + comm.lable);
 
 							} catch (Exception e) {
-								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.ElementAt(0) + "'! ", e);
+								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.First.Value + "'! ", e);
 							}
 							break;
 
@@ -944,32 +1140,36 @@ namespace smps2asm {
 							try {
 								// attempt to add an item to the Dictionary
 								stack.ElementAt(0).Add("STOP " + lnum, new Stop());
+								d(lnum + ':'+ tab +';');
 
 							} catch (Exception e) {
-								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.ElementAt(0) + "'! ", e);
+								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.First.Value + "'! ", e);
 							}
 							break;
 
 						case '¤':
 							try {
-								co = new Condition(line.Substring(2, line.LastIndexOf(' ') - 2).Replace(" ", ""),
-									new Dictionary<string, object>(), new Dictionary<string, object>());
+								co.AddFirst(new Condition(line.Substring(2, line.LastIndexOf(' ') - 2).Replace(" ", ""),
+									new Dictionary<string, object>(), new Dictionary<string, object>()));
 								// attempt to add an item to the Dictionary
-								stack.ElementAt(0).Add("CONDITION " + lnum, co);
-								stack.AddFirst(co.True);
+								stack.First.Value.Add("CONDITION " + lnum, co.First.Value);
+								stack.AddFirst(co.First.Value.True);
 								isTrue = inCondition = true;
+								d(lnum + ':'+ tab + line);
+								tabc++;
 
 							} catch (Exception e) {
-								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.ElementAt(0) + "'! ", e);
+								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.First.Value + "'! ", e);
 							}
 							break;
 
 						case '%':
 							try {
-								stack.ElementAt(0).Add("COMMENT " + lnum, new Comment(line.Substring(1)));
+								stack.First.Value.Add("COMMENT " + lnum, new Comment(line.Substring(1)));
+								d(lnum + ':'+ tab + line);
 
 							} catch (Exception e) {
-								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.ElementAt(0) + "'! ", e);
+								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.First.Value + "'! ", e);
 							}
 							break;
 
@@ -981,14 +1181,15 @@ namespace smps2asm {
 
 									default:
 										// something has gone terribly wrong
-										error("Could not resolve file: Go to type '" + line.ElementAt(1) + "' not recognized!");
 										error("smps2asm script.asm:Line " + lnum + ": Go to type '"+ line.ElementAt(1) +"' not recognized!");
 										break;
 								}
-								stack.ElementAt(0).Add("GOTO " + lnum, new Goto(line.ElementAt(1), line.Substring(3)));
+
+								stack.First.Value.Add("GOTO " + lnum, new Goto(line.ElementAt(1), line.Substring(3)));
+								d(lnum + ':'+ tab + line);
 
 							} catch (Exception e) {
-								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.ElementAt(0) + "'! ", e);
+								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.First.Value + "'! ", e);
 							}
 							break;
 
@@ -1000,6 +1201,7 @@ namespace smps2asm {
 			}
 
 			if(stack.Count > 1) {
+				dt(lnum + ": Not terminated!");
 				error("smps2asm script.asm:Line " + lnum + ": Script not terminated!");
 			}
 		}
@@ -1047,10 +1249,16 @@ namespace smps2asm {
 				int len = 0;
 
 				// if a type is required, check it here
-				if (s.Contains("!")) {
-					type = s.ElementAt(0);
-					len = Int32.Parse(s.Substring(1, s.IndexOf('!') - 1));
-					s = s.Substring(s.IndexOf('!') + 1);
+				try {
+					if (s.Contains("!")) {
+						type = s.ElementAt(0);
+						len = Int32.Parse(s.Substring(1, s.IndexOf('!') - 1));
+						s = s.Substring(s.IndexOf('!') + 1);
+					}
+				} catch (Exception) {
+					// if it failed, we then did not want any type afterall or it was bad type.
+					// easiest thing is just to ignore it.
+					type = '\0';
 				}
 
 				// translate all abstract symbols
@@ -1150,16 +1358,33 @@ namespace smps2asm {
 
 		// print error info, and then exits the program after user input is received
 		public static void error(string str) {
+			wd();
 			Console.Write(str);
 			Console.ReadKey(true);
 			Environment.Exit(-1);
 		}
 
 		public static void error(string str, Exception e) {
+			wd();
 			Console.Write(str);
 			Console.WriteLine(e.ToString());
 			Console.ReadKey(true);
 			Environment.Exit(-1);
+		}
+
+		// prints debug INFO level text
+		private static void dt(string v) {
+			if (debug) d("--- " + v + " ---");
+		}
+
+		// prints debug NORMAL level text
+		private static void d(string v) {
+			if (debug) defl += v + "\r\n";
+		}
+
+		private static void wd() {
+			if (debug)
+				File.WriteAllText(fout + ".log", defl);
 		}
 	}
 }
