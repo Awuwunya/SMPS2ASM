@@ -1,98 +1,368 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.IO;
-using System.Reflection;
-using System.Data;
 using NCalc;
 using System.Diagnostics;
+using System.Threading;
+using System.Windows.Forms;
+using System.Reflection;
+using System.Runtime.InteropServices;
 
 namespace smps2asm {
 	class Program {
+		#region GLOBAL VARS
+		private static readonly Mutex mutex = new Mutex(true, Assembly.GetExecutingAssembly().GetName().CodeBase);
+		private static bool _userRequestExit = false;
+		private static bool _doIStop = false;
+		static HandlerRoutine consoleHandler;
+		#endregion
+
+		[DllImport("Kernel32")]
+		public static extern bool SetConsoleCtrlHandler(HandlerRoutine Handler, bool Add);
+
+		// A delegate type to be used as the handler routine for SetConsoleCtrlHandler.
+		public delegate bool HandlerRoutine(CtrlTypes CtrlType);
+
+		// An enumerated type for the control messages sent to the handler routine.
+		public enum CtrlTypes {
+			CTRL_C_EVENT = 0,
+			CTRL_BREAK_EVENT,
+			CTRL_CLOSE_EVENT,
+			CTRL_LOGOFF_EVENT = 5,
+			CTRL_SHUTDOWN_EVENT
+		}
+
+
+		private static bool ConsoleCtrlCheck(CtrlTypes ctrlType) {
+			// Put your own handler here
+			switch(ctrlType) {
+				case CtrlTypes.CTRL_C_EVENT:
+					_userRequestExit = false;
+					ctrlc = true;
+					break;
+
+				case CtrlTypes.CTRL_BREAK_EVENT:
+				case CtrlTypes.CTRL_CLOSE_EVENT:
+				case CtrlTypes.CTRL_LOGOFF_EVENT:
+				case CtrlTypes.CTRL_SHUTDOWN_EVENT:
+					_userRequestExit = true;
+					break;
+			}
+
+			return true;
+		}
+
 		public static Dic sett;
 		public static string name, lblparent = null, defl = "", fout;
 		public static List<OffsetString> lines, lables;
-		public static uint offset = 0, boff = 0;
+		public static uint offset = 0, boff = 0, importd = 0;
 		public static byte[] dat;
 		public static bool[] skippedBytes;
 		public static bool followlable = false, inHeader = true, stop = false, debug = false;
 		private static Dic[] currDics;
+		private static bool ctrlc = false, pause = false, specialcomment = false;
+		const uint importdmax = 3;
 
+		private static string t_get(string s, int start, int end) {
+			return s.Substring(start, end - start);
+		}
+
+		private static string t_rmv(string s, int start, int end) {
+			return s.Substring(0, start) + s.Substring(end, s.Length - end);
+		}
+
+		private static string t_put(string s, int off, string ch) {
+			return s.Substring(0, off) + ch + s.Substring(off, s.Length - off);
+		}
+
+		private static void t_cct(string s, int start, int end, ConsoleColor fg, ConsoleColor bg) {
+			Console.ForegroundColor = fg;
+			Console.BackgroundColor = bg;
+			Console.Write(t_get(s, start, end));
+		}
+
+		private static void t_cct(string s, int x, int y) {
+			Console.SetCursorPosition(x, y);
+			Console.Write(s);
+		}
+
+		[STAThread]
 		static void Main(string[] args) {
 			Stopwatch timer = null;
-			bool cmd;
-			string settings, fin, 
-				folder = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(System.Environment.CurrentDirectory), @""));
+			bool cmd = true;
+			string settings, fin, folder = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(System.Environment.CurrentDirectory), @""));
+			string message = "Controls:\n  Up/Down - Move between lines\n  ESC - Quit program\n  Enter - Confirm input and continue program\n  F1 - Change whether program pauses when complete\n  F2 - Change whether to write debug info";
 
-			// no commandline arguments, get arguments from user
-			if (args.Length == 0) {
-				cmd = false;
-				fin = folder + "\\music\\" + GetInput("tell the music file name with extension");
-				string fld = GetInput("\ntell the sound driver folder name");
+			consoleHandler = new HandlerRoutine(ConsoleCtrlCheck);
+			SetConsoleCtrlHandler(consoleHandler, true);
+			Console.Title = "SMPS2ASM/NAT  Built: "+ new FileInfo(Assembly.GetExecutingAssembly().Location).LastWriteTime.ToShortDateString() +" "+ new FileInfo(Assembly.GetExecutingAssembly().Location).LastWriteTime.ToShortTimeString();
 
-				if (fld.Contains('.')) {
-					settings = folder + "\\" + fld.Split('.')[0] + "\\smps2asm script."+ fld.Split('.')[1] + ".asm";
+			{
+				int index = 0, cpos = 0, cpose = 0;
 
-				} else {
-					settings = folder + "\\" + fld + "\\smps2asm script.asm";
-				}
+				string sp;
 
-				name = GetInput("\ntell the project name");
+			fail:
+				// no commandline arguments, get arguments from user
+				if(args.Length == 0 || !cmd) {
+					sp = "";
+					for(int i = 32;i < Console.BufferWidth;i++)
+						sp += ' ';
 
-			// 3 or more commandline argumets, get arguments from the commandline
-			} else if(args.Length >= 3) {
-				while (args[0].StartsWith("-")) {
-					switch (args[0].ElementAt(1)) {
-						case 'd':
-							debug = !debug;
-							break;
-
-						default:
-							System.Console.WriteLine("Warn: Flag '-" + args[0].ElementAt(1) + "' does not exist!");
-							break;
+					if(cmd) {
+						cmd = false;
+						args = new string[] { "", "", "", };
 					}
 
-					// remove first argument.
-					args = args.Skip(1).ToArray();
+				message:
+					Console.Clear();
+					Console.ForegroundColor = ConsoleColor.Gray;
+					Console.BackgroundColor = ConsoleColor.Black;
+					t_cct("Music file name with extension: ", 0, 0);
+					t_cct("Sound driver folder name:       ", 0, 1);
+					t_cct("Project name:                   ", 0, 2);
+					t_cct("Pause: " + (pause ? "Yes" : "No"), 0, 3);
+					t_cct("Debug: " + (debug ? "Yes" : "No"), 0, 4);
+					t_cct(message, 0, 6);
+
+					Console.ForegroundColor = ConsoleColor.White;
+					Console.BackgroundColor = ConsoleColor.Black;
+					t_cct(args[0], 32, 0);
+					t_cct(args[1], 32, 1);
+					t_cct(args[2], 32, 2);
+					Console.SetCursorPosition(32 + cpos, index);
+					goto repaint;
+
+				loop:
+					while(!Console.KeyAvailable) {
+						Thread.Sleep(10);
+
+						// hack: CTRL+C handler
+						if(ctrlc) {
+							ctrlc = false;
+							Clipboard.SetText(t_get(args[index], Math.Min(cpos, cpose), Math.Max(cpos, cpose)));
+						}
+					}
+
+					ConsoleKeyInfo c = Console.ReadKey(true);
+					switch(c.Key) {
+						case ConsoleKey.Escape:
+							return;     // exit prg
+
+						case ConsoleKey.Enter:
+							goto end;   // accept vars
+
+						case ConsoleKey.F1:
+							pause ^= true;
+							goto message;   // pause (no/yes)
+
+						case ConsoleKey.F2:
+							debug ^= true;
+							goto message;   // debug (no/yes)
+
+						case ConsoleKey.UpArrow:
+							Console.SetCursorPosition(32, 0 + index);
+							Console.Write(args[index]);
+
+							index--;
+							if(index < 0)
+								index = 2;
+
+							cpos = args[index].Length;
+							cpose = cpos;
+							goto repaint;   // go up 1 line
+
+						case ConsoleKey.DownArrow:
+							Console.SetCursorPosition(32, 0 + index);
+							Console.Write(args[index]);
+
+							index++;
+							index %= 3;
+
+							cpos = args[index].Length;
+							cpose = cpos;
+							goto repaint;   // go down 1 line
+
+						case ConsoleKey.LeftArrow:
+							if(cpos > 0) {
+								cpos--;
+								if((c.Modifiers & ConsoleModifiers.Shift) == 0) {
+									cpose = cpos;
+								}
+							}
+							goto repaint;   // go up 1 line
+
+						case ConsoleKey.RightArrow:
+							if(cpos < args[index].Length) {
+								cpos++;
+								if((c.Modifiers & ConsoleModifiers.Shift) == 0) {
+									cpose = cpos;
+								}
+							}
+							goto repaint;   // go up 1 line
+
+						case ConsoleKey.Delete:
+							args[index] = "";
+							cpos = 0;
+							cpose = 0;
+							goto repaint;   // del all text
+
+						case ConsoleKey.Backspace:
+							if(cpos != cpose) {
+								args[index] = t_rmv(args[index], Math.Min(cpos, cpose), Math.Max(cpos, cpose));
+							} else if(cpos > 0) {   // remove char
+								args[index] = t_rmv(args[index], cpos - 1, cpos);
+								//	args[index] = args[index].Substring(0, cpos - 1) + args[index].Substring(cpos, args[index].Length - cpos);
+								cpos--;
+							}
+
+							if(cpos > args[index].Length)
+								cpos = args[index].Length;
+
+							cpose = cpos;
+							goto repaint;
+
+						default:
+							if((c.Modifiers & ConsoleModifiers.Control) != 0) {
+								if(c.Key == ConsoleKey.V) {
+									if(Clipboard.ContainsText()) {
+										if(cpos != cpose) {
+											args[index] = t_rmv(args[index], Math.Min(cpos, cpose), Math.Max(cpos, cpose));
+
+											if(cpos > args[index].Length)
+												cpos = args[index].Length;
+										}
+
+										string t = Clipboard.GetText(TextDataFormat.Text);
+										args[index] = t_put(args[index], cpos, t);
+										cpos += t.Length;
+										cpose = cpos;
+									}
+									goto repaint;
+
+								} else if(c.Key == ConsoleKey.X) {
+									if(cpos != cpose) {
+										Clipboard.SetText(t_get(args[index], Math.Min(cpos, cpose), Math.Max(cpos, cpose)));
+										args[index] = t_rmv(args[index], Math.Min(cpos, cpose), Math.Max(cpos, cpose));
+
+										if(cpos > args[index].Length)
+											cpos = args[index].Length;
+
+										cpose = cpos;
+										goto repaint;
+									}
+									goto loop;
+
+								} else if(c.Key == ConsoleKey.A) {
+									cpose = 0;
+									cpos = args[index].Length;
+									goto loop;
+								}
+							}
+
+							if(cpos != cpose) {
+								args[index] = t_rmv(args[index], Math.Min(cpos, cpose), Math.Max(cpos, cpose));
+
+								if(cpos > args[index].Length)
+									cpos = args[index].Length;
+							}
+
+							args[index] = t_put(args[index], cpos, "" + c.KeyChar);
+							cpos++;
+							cpose = cpos;
+							goto repaint;
+					}
+
+				repaint:
+					Console.SetCursorPosition(32, 0 + index);
+					Console.Write(sp);
+					Console.SetCursorPosition(32, 0 + index);
+					t_cct(args[index], 0, Math.Min(cpos, cpose), ConsoleColor.White, ConsoleColor.Black);
+					t_cct(args[index], Math.Min(cpos, cpose), Math.Max(cpos, cpose), ConsoleColor.Black, ConsoleColor.White);
+					t_cct(args[index], Math.Max(cpos, cpose), args[index].Length, ConsoleColor.White, ConsoleColor.Black);
+					Console.SetCursorPosition(Math.Min(32 + cpos, Console.BufferWidth - 1), 0 + index);
+					goto loop;
+
+				end:
+					sp = "";
+					for(int i = 1;i < Console.BufferWidth;i++)
+						sp += ' ';
+
+					Console.ForegroundColor = ConsoleColor.Gray;
+					Console.BackgroundColor = ConsoleColor.Black;
+					Console.SetCursorPosition(0, 6);
+
+					Console.WriteLine(sp);
+					Console.WriteLine(sp);
+					Console.WriteLine(sp);
+					Console.WriteLine(sp);
+					Console.WriteLine(sp);
+					Console.WriteLine(sp);
+					Console.SetCursorPosition(0, 6);
 				}
 
+				// 3 or more commandline argumets, get arguments from the commandline
+				if(args.Length >= 3) {
+					while(args[0].StartsWith("-")) {
+						switch(args[0].ElementAt(1)) {
+							case 'd':
+								debug = !debug;
+								break;
 
-				cmd = true;
-				fin = folder + "\\music\\" + args[0];
+							default:
+								System.Console.WriteLine("Warn: Flag '-" + args[0].ElementAt(1) + "' does not exist!");
+								break;
+						}
 
-				if (args[1].Contains('.')) {
-					settings = folder + "\\" + args[1].Split('.')[0] + "\\smps2asm script." + args[1].Split('.')[1] + ".asm";
+						// remove first argument.
+						args = args.Skip(1).ToArray();
+					}
+
+					fin = folder + "\\music\\" + args[0];
+
+					if(args[1].Contains('.')) {
+						settings = folder + "\\" + args[1].Split('.')[0] + "\\smps2asm script." + args[1].Split('.')[1] + ".asm";
+
+					} else {
+						settings = folder + "\\" + args[1] + "\\smps2asm script.asm";
+					}
+
+					name = args[2];
+
+					// 1 or 2 arguments, show usage to user
+				} else {
+					Console.WriteLine("Illegal number of arguments!");
+					error("Usage: smps2asm <filename.extension> <driver folder> <project name>");
+					return;
+				}
+
+				// removes the extension of input file and adds .asm as the extension of output file
+				if(fin.IndexOf(".", fin.LastIndexOf("\\")) > 0) {
+					fout = fin.Substring(0, fin.LastIndexOf(".")) + ".asm";
 
 				} else {
-					settings = folder + "\\" + args[1] + "\\smps2asm script.asm";
+					fout = fin + ".asm";
 				}
 
-				name = args[2];
+				// makes sure necessary files exist
+				if(!File.Exists(settings)) {
+					if(cmd) {
+						error("File '" + settings + "' does not exist!");
+					}
 
-			// 1 or 2 arguments, show usage to user
-			} else {
-				Console.WriteLine("Illegal number of arguments!");
-				error("Usage: smps2asm <filename.extension> <driver folder> <project name>");
-				return;
-			}
+					message = "File '" + settings + "' does not exist!";
+					goto fail;
+				}
 
-			// removes the extension of input file and adds .asm as the extension of output file
-			if (fin.IndexOf(".", fin.LastIndexOf("\\")) > 0) {
-				fout = fin.Substring(0, fin.LastIndexOf(".")) + ".asm";
+				if(!File.Exists(fin)) {
+					if(cmd) {
+						error("File '" + fin + "' does not exist!");
+					}
 
-			} else {
-				fout = fin + ".asm";
-			}
-
-			// makes sure necessary files exist
-			if (!File.Exists(settings)) {
-				error("File '" + settings + "' does not exist!");
-			}
-
-			if (!File.Exists(fin)) {
-				error("File '" + fin + "' does not exist!");
+					message = "File '" + fin + "' does not exist!";
+					goto fail;
+				}
 			}
 
 			// parse settings file
@@ -119,8 +389,10 @@ namespace smps2asm {
 
 			// open input file for reading
 			try {
-				if (((Dic) sett.GetValue("dat")).ContainsKey("offset")) {
-					offset = parseUInt((string) ((Dic) sett.GetValue("dat")).GetValue("offset"), -1);
+				Equate off = ((Dic)sett.GetValue("dat")).GetValue("offset") as Equate;
+				if (off != null) {
+					if(!off.calculated) off.calc();
+					offset = (uint)off.value;
 					dt("Data offset set to '"+ toHexString(offset, 4) +"'");
 				}
 				
@@ -154,19 +426,11 @@ namespace smps2asm {
 
 				Console.WriteLine("Writing out the file...");
 				dt("File write started");
-				// default starting string is as follows:
-				/*
-					[name]_Header:
-						smpsHeaderStartSong
 
-				*/
-				// it is done to fix any crashes or inconsistency with including this macro,
-				// because it does not take a single byte of data, and therefore we need to
-				// either pretend we are in address -1, or have 2 entries for same byte.
-				// both situations are very bad for the code below, because it does not know
-				// how to handle checking for unused bytes in negative address, or it thinks
-				// there are multiple data in same location.
-				string o = name + "_Header:\r\n\tsmpsHeaderStartSong\r\n", currLine = "";
+				// The old header hack has been removed. Apparently changes later has removed
+				// issue and -1 address requirement! Therefore, we can now leave the definition
+				// up to the script file itself!
+				string o = name + "_Header:\r\n", currLine = "";
 				uint currLineArg = 0, nxtchk = 0;
 				bool lastwaslable = true;
 
@@ -296,28 +560,19 @@ namespace smps2asm {
 			}
 
 			Console.WriteLine("Wrote output file! Took " + timer.ElapsedMilliseconds + " ms!");
-			if (!cmd) {
-				error("SMPS2ASM conversion successful! Took "+ (timer.ElapsedMilliseconds + tra) +" ms!");
+			Console.WriteLine("SMPS2ASM conversion successful! Took " + (timer.ElapsedMilliseconds + tra) + " ms!");
 
-			} else {
-				Console.WriteLine("SMPS2ASM conversion successful! Took " + (timer.ElapsedMilliseconds + tra) + " ms!");
+			if(pause) {
+				Console.ReadKey();
 			}
 		}
 
 		private static void TranslateFile() {
 			dt("Starting file translation");
 			// first parse header
-			object h = sett.GetValue("header");
-			if (h != null && h.GetType() == typeof(Dic)) {
-				// found valid header, parse!
-				Console.WriteLine("Parsing header...");
-				dt("Parsing header");
-				parseAllFunctions2((Dic)h);
-
-			} else {
-				// did not find valid header
-				error("SMPS files without a header are not supported!");
-			}
+			Console.WriteLine("Parsing header...");
+			dt("Parsing header");
+			parseAllFunctions2(getDic("header"));
 
 			// setup the stuffs!
 			inHeader = false;
@@ -328,23 +583,23 @@ namespace smps2asm {
 			foreach (OffsetString o in lables.ToArray()) {
 				Console.WriteLine("Parsing " + o.line + "...");
 				if (o.line.Contains("DAC")) {
-					// if DAC code, use DAC variables and coordination flags
+					// if DAC code, use DAC variables and command flags
 					boff = (uint) (o.offset - offset);
 					dt("Parsing DAC data '"+ o.line + "' at "+ toHexString(boff, 4));
-					parseInput(new Dic[] { sett.GetValue("coordination") as Dic, sett.GetValue("DAC") as Dic });
+					parseInput(new Dic[] { getDic("comm"), getDic("DAC") });
 
 				} else if (o.line.Contains("FM") || o.line.Contains("PSG")) {
-					// if FM or PSG code, use note variables and coordination flags
+					// if FM or PSG code, use note variables and command flags
 					boff = (uint) (o.offset - offset);
 					dt("Parsing "+ (o.line.Contains("FM") ? "FM" : "PSG") +" data '" + o.line + "' at " + toHexString(boff, 4));
-					parseInput(new Dic[] { sett.GetValue("coordination") as Dic, sett.GetValue("note") as Dic });
+					parseInput(new Dic[] { getDic("comm"), getDic("note") });
 
-				} else if (o.line.Contains("Voices")) {
+				} else if (o.line.Contains("Patches")) {
 					// set current file offset, too
 					boff = (uint) (o.offset - offset);
-					dt("Parsing Voice data '" + o.line + "' at " + toHexString((int) boff, 4));
-					// find the closest lable after the voices lable. Fixes Voices overflowing to other SMPS code
-					// this happens in WOI music, when voices are before the SMPS code
+					dt("Parsing patch data '" + o.line + "' at " + toHexString((int) boff, 4));
+					// find the closest lable after the patches lable. Fixes Patches overflowing to other SMPS code
+					// this happens in WOI music, when patches are before the SMPS code
 					ulong loff = 0xFFFFFFFFFFFFFFFF;
 					foreach (OffsetString of in lables.ToArray()) {
 						if(of.offset > o.offset && of.offset < loff) {
@@ -356,9 +611,9 @@ namespace smps2asm {
 					dt("Found next lable at " + toHexString((int) loff, 4));
 
 					for (uint i = boff;i < dat.Length && i < loff;) {
-						dt("Parsing voice at " + toHexString((int) boff, 4));
-						// parse all function in Voices
-						parseAllFunctions2(sett.GetValue("Voices") as Dic);
+						dt("Parsing patch at " + toHexString((int) boff, 4));
+						// parse all function in patch
+						parseAllFunctions2(getDic("patch"));
 						// this simply marks all the bytes as unused. Not worth the headache to fix this properly
 						for (;i < boff;i ++) skippedBytes[i] = true;
 						// set counter to current offset
@@ -366,6 +621,13 @@ namespace smps2asm {
 					}
 				}
 			}
+		}
+
+		private static Dic getDic(string v) {
+			Dic d = sett.GetValue(v) as Dic;
+
+			if(d == null)	error("Dictionary '"+ v +"' not found! Are you sure you defined it?");
+			return d;
 		}
 
 		private static void parseInput(Dic[] dic) {
@@ -392,9 +654,9 @@ namespace smps2asm {
 		private static bool parseAllFunctions(Dic d) {
 			if (boff >= dat.Length) {
 				// havent tested this properly, so having warning for now
-				Console.WriteLine("WARN: Checking functions after end of SMPS file! (size: " + dat.Length + ", offset: "+ boff +") Please report to Natsumi if this causes a crash!");
+			//	Console.WriteLine("WARN: Checking functions after end of SMPS file! (size: " + dat.Length + ", offset: "+ boff +") Please report to Natsumi if this causes a crash!");
 				//		error("Could not resolve file: Out of file bounds (size: " + dat.Length + ", offset: "+ boff +')');
-				dt("WARN: Checking functions after énd of file at " + toHexString((int) boff, 4));
+				dt("WARN: Checking functions after end of file at " + toHexString((int) boff, 4));
 
 			}
 
@@ -420,12 +682,14 @@ namespace smps2asm {
 			if (value.GetType() == typeof(Equate)) {
 				// parse equate
 				Equate v = (Equate) value;
-				if (!v.calculated) v.calc();
-				d('='+ key +' '+ v.value);
+				if (!v.calculated) {
+					v.calc();
+					dx('=' + key + " c " + v.value);
+				}
 
 				if (writeEqu && ReadByte(boff) == v.value) {
 					PutOnLine(key);
-
+					dx('=' + key + ' ' + v.value);
 					boff++;
 				}
 
@@ -439,41 +703,41 @@ namespace smps2asm {
 				// plop the new value in and calculate it!
 				e.raw = ((EquateChange) value).value;
 				e.calc();
-				d("==" + ((EquateChange) value).name + " " + e.value);
+				dx("==" + ((EquateChange) value).name + " " + e.value);
 
 			} else if (value.GetType() == typeof(Condition)) {
 				// condition
 				Condition v = (Condition) value;
-				d("¤ " + TranslateAllAbstract(v.GetCondition()) +" {");
+				dx("¤ " + TranslateAllAbstract(v.GetCondition()) +" {");
 				if (parseBool(v.GetCondition(), -1)) {
 					parseAllFunctions2(v.True);
-					d("}");
+					dx("}");
 
 				} else {
-					d("} {");
+					dx("} {");
 					parseAllFunctions2(v.False);
-					d("}");
+					dx("}");
 				}
 
 			} else if (value.GetType() == typeof(Command)) {
 				// we just need to emulate a translation, and then ignore the result!
 				// easy right? Just remember to not use 'aw' or 'ow', that will screw things up!
-				d("$ " + ((Command) value).command);
+				dx("$ " + ((Command) value).command);
 				TranslateAllAbstract(((Command) value).command);
 
 			} else if (value.GetType() == typeof(Repeat)) {
 				// repeat block
 				Repeat v = (Repeat) value;
 				long t = parseLong(v.times, -1);
-				d("* " + t + " {");
+				dx("* " + t + " {");
 				for (long i = 0; i < t;i++) {
-					d("*" + i);
+					dx("*" + i);
 					parseAllFunctions2(v);
 				}
 
 			} else if (value.GetType() == typeof(ChangeLable)) {
 				// change lable format
-				d("~" + TranslateAllAbstract(((ChangeLable) value).lable));
+				dx("~" + TranslateAllAbstract(((ChangeLable) value).lable));
 				lblparent = TranslateAllAbstract(((ChangeLable) value).lable);
 
 			} else if (value.GetType() == typeof(Comment)) {
@@ -494,8 +758,14 @@ namespace smps2asm {
 					}
 				}
 				
-				d("%" + ln);
-				AddLable(xoff + offset,'\t' + ln.Replace("\\t", "\t").Replace("\\n", "\n").Replace("\\r", "\r"));
+				dx("%" + ln);
+				string abc = ln.Replace("\\t", "\t").Replace("\\n", "\n").Replace("\\r", "\r");
+				if(specialcomment) {
+					OffsetString os = lines.ElementAt(lines.Count - 1);
+					if(!os.line.EndsWith("\t")) os.line += '\t';
+					os.line += abc;
+
+				} else AddLable(xoff + offset, '\t' + abc);
 
 			} else if (value.GetType() == typeof(Goto)) {
 				// goto file position
@@ -522,7 +792,7 @@ namespace smps2asm {
 						break;
 				}
 
-				d("> " + boff);
+				dx("> " + boff);
 
 			} else if (value.GetType() == typeof(Macro) && checkMacroArgs((Macro)value)) {
 				// macro block
@@ -530,7 +800,7 @@ namespace smps2asm {
 				uint xoff = boff;
 				boff += (uint)v.requiredBytes();
 
-				string arg = "", comment;
+				string arg = "";
 				int i = 0;
 				foreach (string s in v.arguments) {
 					if (s != null && s.Length > 0) {
@@ -561,18 +831,12 @@ namespace smps2asm {
 					i++;
 				}
 
-				if((comment = (string)v.GetValue("comment")) == null) {
-					comment = "";
-
-				} else {
-					comment = "\t; " + comment;
-				}
-
 				if (arg.Length > 2) {
 					arg = arg.Substring(2);
 				}
 
-				OutLine((uint) (offset + xoff), boff - xoff, "\t" + v.getName() + "\t" + arg + comment);
+				string n = v.getName().Replace("\\t", "\t");
+				OutLine((uint) (offset + xoff), boff - xoff, "\t" + n + "\t" + arg);
 
 				if (debug) {
 					string a = "";
@@ -584,10 +848,12 @@ namespace smps2asm {
 						a = a.Substring(2);
 					}
 
-					d("!" + a +" "+ v.getName() + " "+ arg +";");
+					dx("!" + a +" "+ n + " "+ arg +";");
 				}
 
+				specialcomment = true;
 				parseAllFunctions(v);
+				specialcomment = false;
 
 			} else if (value.GetType() == typeof(ArgMod)) {
 				// argument modifier
@@ -601,6 +867,9 @@ namespace smps2asm {
 					if (x != null && x.Length > 0) {
 						if(v.ID != 0) x = " "+ x;
 						args[v.ID] = x;
+
+					} else {
+						x = "null";
 					}
 
 					string o = ln.line.Substring(0, i);
@@ -610,7 +879,7 @@ namespace smps2asm {
 					}
 
 					ln.line = o.Substring(0, o.Length - 1);
-					d("#"+ v.ID +" " + y + " " + x.Replace(" ", ""));
+					dx("#"+ v.ID +" " + y + " " + x.Replace(" ", ""));
 
 				} else {
 					if (v.ID < 0) {
@@ -622,9 +891,25 @@ namespace smps2asm {
 				}
 
 			} else if (value.GetType() == typeof(Stop)) {
-				d(";");
+				dx(";");
 				stop = true;
 				return;
+
+			} else if(value.GetType() == typeof(Import)) {
+				if(importd < importdmax) {
+					dt("Import tree is too deep. Max "+ importdmax +" imports.");
+					error("Import subscript cycle too deep! Maximum of "+ importdmax +" deep import tree is allowed!");
+				}
+
+				Dic d = sett.GetValue((value as Import).name) as Dic;
+				if(d == null) {
+					dt("Subscript '"+ (value as Import).name + "' does not exist.");
+					error("Failed to find imported subscript '"+ (value as Import).name + "'!");
+				}
+
+				importd++;	// add 1 to the import depth level. If is greather than 3, it will be flagged as infinite loop and denied.
+				parseAllFunctions(d);
+				importd--;
 			}
 		}
 
@@ -672,14 +957,26 @@ namespace smps2asm {
 
 		private static string FindValue(long val, Dic d) {
 			foreach (KeyValuePair<string, object> kv in d.GetKeyset()) {
-				if (kv.Value.GetType() == typeof(Dic)) {
+				if(kv.Value.GetType() == typeof(Dic)) {
 					string r = FindValue(val, kv.Value as Dic);
-					if (r != null) return r;
+					if(r != null) return r;
 
-				} else if (kv.Value.GetType() == typeof(Equate)) {
-					if (!((Equate) kv.Value).calculated) ((Equate) kv.Value).calc();
+				} else if(kv.Value.GetType() == typeof(Import)) {
+					string name = (kv.Value as Import).name;
+					Dic dd = sett.GetValue(name) as Dic;
+					if(dd == null) {
+						dt("Subscript '" + name + "' does not exist.");
+						error("Failed to find imported subscript '" + name + "'!");
+					}
 
-					if (val == ((Equate) kv.Value).value) {
+					string r = FindValue(val, dd);
+					if(r != null) return r;
+
+				} else if(kv.Value.GetType() == typeof(Equate)) {
+					if(!((Equate)kv.Value).calculated)
+						((Equate)kv.Value).calc();
+
+					if(val == ((Equate)kv.Value).value) {
 						return kv.Key;
 					}
 				}
@@ -806,9 +1103,7 @@ namespace smps2asm {
 
 		private static string ReadWordAbs(uint off) {
 			string endian = ((Equate) ((Dic) sett.GetValue("dat")).GetValue("endian")).raw;
-			int x = 0;
 			ushort pos;
-			string lable = lblparent;
 
 			if (endian.Equals("\"little\"")) {
 				pos = (ushort) ((ReadByte(off) | (ReadByte(off + 1) << 8)));
@@ -821,8 +1116,7 @@ namespace smps2asm {
 				return null;
 			}
 			
-			while (hasLable(lblparent.Replace("#", "" + (++x)) + ':', pos));
-			string o = lblparent.Replace("#", "" + x);
+			string o = pickLable(pos);
 			AddLable(pos, o +':');
 
 			if (followlable && pos - offset >= boff) {
@@ -838,7 +1132,6 @@ namespace smps2asm {
 
 		private static string ReadWordOff(uint off) {
 			string endian = ((Equate) ((Dic) sett.GetValue("dat")).GetValue("endian")).raw;
-			int x = 0;
 			ushort pos;
 			string lable = lblparent;
 
@@ -853,8 +1146,7 @@ namespace smps2asm {
 				return null;
 			}
 
-			while (hasLable(lblparent.Replace("#", "" + (++x)) + ':', pos));
-			string o = lblparent.Replace("#", "" + x);
+			string o = pickLable(pos);
 			AddLable(pos, o +':');
 
 			if (followlable && pos >= boff) {
@@ -870,7 +1162,6 @@ namespace smps2asm {
 
 		private static string ReadWordHdr(uint off) {
 			string endian = ((Equate) ((Dic) sett.GetValue("dat")).GetValue("endian")).raw;
-			int x = 0;
 			ushort pos;
 			string lable = lblparent;
 
@@ -885,8 +1176,7 @@ namespace smps2asm {
 				return null;
 			}
 
-			while (hasLable(lblparent.Replace("#", "" + (++x)) + ':', pos));
-			string o = lblparent.Replace("#", "" + x);
+			string o = pickLable(pos);
 			AddLable(pos, o +':');
 
 			if (followlable && pos >= boff) {
@@ -913,6 +1203,18 @@ namespace smps2asm {
 				error("Could not resolve endianness '" + endian.Replace("\"", "") + "'");
 				return -1;
 			}
+		}
+
+		private static string pickLable(ushort pos) {
+			int x = 0;
+			while (hasLable(lblparent.Replace("#", "" + (++x)) + ':', pos)) {
+				if (!lblparent.Contains("#") || x > 100) {
+					error("Infinite string substitution loop for lable '" + lblparent + "'. Additionally, repeat count was " + (x - 1));
+					return null;
+				}
+			}
+
+			return lblparent.Replace("#", "" + x);
 		}
 
 		private static bool hasLable(string lable, uint off) {
@@ -1019,20 +1321,30 @@ namespace smps2asm {
 							break;
 
 						case '?':
-							if(!line.Contains(" {")) {
-								error("smps2asm script.asm:Line " + lnum + ": '{' expected");
-							}
+							if(line.EndsWith(" {")) {
+								Dic d1 = new Dic(new Dictionary<string, object>());
+								try {
+									string name = line.Substring(1, line.IndexOf(' ') - 1);
+									stack.First.Value.Add(name, d1);
+									stack.AddFirst(d1);
+									d(lnum + ':' + tab + '?' + name + " {");
+									tabc++;
 
-							Dic d1 = new Dic(new Dictionary<string, object>());
-							try {
-								string name = line.Substring(1, line.IndexOf(' ') - 1);
-								stack.First.Value.Add(name, d1);
-								stack.AddFirst(d1);
-								d(lnum + ':'+ tab +'?' + name +" {");
-								tabc++;
+								} catch(Exception e) {
+									error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.First.Value + "'! ", e);
+								}
+							} else if(line.EndsWith(";")) {
+								try {
+									string name = line.Substring(1, line.IndexOf(';') - 1);
+									stack.First.Value.Add(name, new Import(name));
+									d(lnum + ':' + tab + '?' + name + ';');
 
-							} catch(Exception e) {
-								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.First.Value + "'! ", e);
+								} catch(Exception e) {
+									error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.First.Value + "'! ", e);
+								}
+
+							} else {
+								error("smps2asm script.asm:Line " + lnum + ": Illegal end of line!");
 							}
 							break;
 
@@ -1074,7 +1386,7 @@ namespace smps2asm {
 								}
 							
 								// attempt to add an item to the Dictionary
-								stack.First.Value.Add(lable, ln);
+								stack.First.Value.Add(lable, new Equate(ln));
 								d(lnum + ':'+ tab +'@' + lable +' '+ num +' '+ ask);
 								d(lnum + ':'+ tab +'=' + lable + ' ' + ln);
 
@@ -1343,13 +1655,13 @@ namespace smps2asm {
 
 		// get input from user, with the string
 		private static string GetInput(string str) {
-			Console.WriteLine(str);
+			Console.Write(str +": ");
 			string ret;
 
 			do {
 				ret = Console.ReadLine();
 				if(ret.Length < 1) {
-					Console.WriteLine("Length must not be under 1 characters.");
+					Console.Write("Length must not be under 1 characters! ");
 				}
 
 			} while (ret.Length < 1);
@@ -1380,6 +1692,12 @@ namespace smps2asm {
 		// prints debug NORMAL level text
 		private static void d(string v) {
 			if (debug) defl += v + "\r\n";
+		}
+
+		// prints debug NORMAL level text with hex offset
+		private static void dx(string v) {
+			if(debug)
+				d(toHexString(boff, 4) + " " + v);
 		}
 
 		private static void wd() {

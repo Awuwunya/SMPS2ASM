@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 14
-VisualStudioVersion = 14.0.24720.0
+VisualStudioVersion = 14.0.25420.1
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "smps2asm", "smps2asm.csproj", "{D4B2056D-1DD9-4276-A81F-935715C0A8F5}"
 EndProject
@@ -13,8 +13,8 @@ Global
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{D4B2056D-1DD9-4276-A81F-935715C0A8F5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{D4B2056D-1DD9-4276-A81F-935715C0A8F5}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{D4B2056D-1DD9-4276-A81F-935715C0A8F5}.Release|Any CPU.ActiveCfg = Debug|Any CPU
-		{D4B2056D-1DD9-4276-A81F-935715C0A8F5}.Release|Any CPU.Build.0 = Debug|Any CPU
+		{D4B2056D-1DD9-4276-A81F-935715C0A8F5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D4B2056D-1DD9-4276-A81F-935715C0A8F5}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
