@@ -26,3 +26,13 @@
 *.exe
 *.out
 *.app
+
+*.pdb
+*.manifest
+*.suo
+*.config
+*.vshost.exe
+obj
+obj/*
+bin/Debug
+bin/Debug/*
