@@ -36,3 +36,5 @@ obj
 obj/*
 bin/Debug
 bin/Debug/*
+.vs
+.vs/*
