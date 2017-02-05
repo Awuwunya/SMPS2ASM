@@ -2,8 +2,8 @@
 <Project ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|AnyCPU'">
     <StartAction>Project</StartAction>
-    <StartWorkingDirectory>G:\tools\disasm\musicpla\exe</StartWorkingDirectory>
-    <StartArguments>"DyHe Izayoi.bin" dyhe_smps Izayoi</StartArguments>
+    <StartWorkingDirectory>G:\tools\disasm\musicpla\bin</StartWorkingDirectory>
+    <StartArguments>"DyHe Ballad For You.bin" dyhe Ballad</StartArguments>
   </PropertyGroup>
   <PropertyGroup>
     <PublishUrlHistory>publish\</PublishUrlHistory>

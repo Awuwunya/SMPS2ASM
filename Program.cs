@@ -33,7 +33,6 @@ namespace smps2asm {
 			CTRL_SHUTDOWN_EVENT
 		}
 
-
 		private static bool ConsoleCtrlCheck(CtrlTypes ctrlType) {
 			// Put your own handler here
 			switch(ctrlType) {
@@ -100,7 +99,6 @@ namespace smps2asm {
 
 			{
 				int index = 0, cpos = 0, cpose = 0;
-
 				string sp;
 
 			fail:
@@ -322,10 +320,10 @@ namespace smps2asm {
 					fin = folder + "\\music\\" + args[0];
 
 					if(args[1].Contains('.')) {
-						settings = folder + "\\" + args[1].Split('.')[0] + "\\smps2asm script." + args[1].Split('.')[1] + ".asm";
+						settings = folder + "\\SMPS\\" + args[1].Split('.')[0] + "\\smps2asm script." + args[1].Split('.')[1] + ".asm";
 
 					} else {
-						settings = folder + "\\" + args[1] + "\\smps2asm script.asm";
+						settings = folder + "\\SMPS\\" + args[1] + "\\smps2asm script.asm";
 					}
 
 					name = args[2];
@@ -535,6 +533,12 @@ namespace smps2asm {
 						nxtchk = (uint)((uint)x + ln.length);
 						dt("Next unused check at "+ toHexString((int) nxtchk, 4));
 					}
+				}
+
+				// split byte line if there was some left
+				if(currLineArg > 0) {
+					dt("Split data with " + currLineArg + " bytes");
+					o += currLine.Substring(0, currLine.Length - 2) + "\r\n";
 				}
 
 				// write this to the out file
@@ -1696,13 +1700,11 @@ namespace smps2asm {
 
 		// prints debug NORMAL level text with hex offset
 		private static void dx(string v) {
-			if(debug)
-				d(toHexString(boff, 4) + " " + v);
+			if(debug) d(toHexString(boff, 4) + " " + v);
 		}
 
 		private static void wd() {
-			if (debug)
-				File.WriteAllText(fout + ".log", defl);
+			if (debug) File.WriteAllText(fout + ".log", defl);
 		}
 	}
 }
