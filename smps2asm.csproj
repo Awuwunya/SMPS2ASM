@@ -63,6 +63,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ArbLable.cs" />
     <Compile Include="ArgMod.cs" />
     <Compile Include="ChangeLable.cs" />
     <Compile Include="Command.cs" />

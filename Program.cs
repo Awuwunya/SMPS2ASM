@@ -55,7 +55,7 @@ namespace smps2asm {
 		public static Dic sett;
 		public static string name, lblparent = null, defl = "", fout;
 		public static List<OffsetString> lines, lables;
-		public static uint offset = 0, boff = 0, importd = 0;
+		public static uint offset = 0, boff = 0, importd = 0, start;
 		public static byte[] dat;
 		public static bool[] skippedBytes;
 		public static bool followlable = false, inHeader = true, stop = false, debug = false;
@@ -428,12 +428,12 @@ namespace smps2asm {
 				// The old header hack has been removed. Apparently changes later has removed
 				// issue and -1 address requirement! Therefore, we can now leave the definition
 				// up to the script file itself!
-				string o = name + "_Header:\r\n", currLine = "";
+				string o = "", currLine = "";
 				uint currLineArg = 0, nxtchk = 0;
 				bool lastwaslable = true;
 
 				// now starts the main loop which will search for all the lables
-				for (int x = (int) offset;x < offset + dat.Length;x++) {
+				for (int x = (int) offset - 1;x < offset + dat.Length;x++) {
 					bool linechanged = false;
 					// fake line to be replaced by current line when done. Used to also check if 2 different lines overlap
 					OffsetString ln = new OffsetString(ulong.MaxValue, 1, ">>>>>>>>>>>>>>>");
@@ -486,7 +486,7 @@ namespace smps2asm {
 					// checks if no line was found for this byte,
 					// last line did not have its bytes extend here,
 					// and this byte was not in skipped bytes list
-					if (!linechanged && x >= nxtchk && !skippedBytes[x - offset]) {
+					if (!linechanged && x >= nxtchk && (x - offset) >= 0 && !skippedBytes[x - offset]) {
 						if (currLineArg == 0) {
 							// if no bytes exist yet, note this as unused bytes and start line
 							currLine = "\t; Unused\r\n\tdc.b ";
@@ -588,40 +588,26 @@ namespace smps2asm {
 				Console.WriteLine("Parsing " + o.line + "...");
 				if (o.line.Contains("DAC")) {
 					// if DAC code, use DAC variables and command flags
-					boff = (uint) (o.offset - offset);
+					start = boff = (uint) (o.offset - offset);
 					dt("Parsing DAC data '"+ o.line + "' at "+ toHexString(boff, 4));
 					parseInput(new Dic[] { getDic("comm"), getDic("DAC") });
 
 				} else if (o.line.Contains("FM") || o.line.Contains("PSG")) {
 					// if FM or PSG code, use note variables and command flags
-					boff = (uint) (o.offset - offset);
+					start = boff = (uint) (o.offset - offset);
 					dt("Parsing "+ (o.line.Contains("FM") ? "FM" : "PSG") +" data '" + o.line + "' at " + toHexString(boff, 4));
 					parseInput(new Dic[] { getDic("comm"), getDic("note") });
 
 				} else if (o.line.Contains("Patches")) {
 					// set current file offset, too
-					boff = (uint) (o.offset - offset);
+					uint x = start = boff = (uint) (o.offset - offset);
 					dt("Parsing patch data '" + o.line + "' at " + toHexString((int) boff, 4));
-					// find the closest lable after the patches lable. Fixes Patches overflowing to other SMPS code
-					// this happens in WOI music, when patches are before the SMPS code
-					ulong loff = 0xFFFFFFFFFFFFFFFF;
-					foreach (OffsetString of in lables.ToArray()) {
-						if(of.offset > o.offset && of.offset < loff) {
-							loff = of.offset;
-						}
-					}
-					// this converts the Z80 offset to offset in input file. In 68k offset is 0 so its not affected.
-					loff -= offset;
-					dt("Found next lable at " + toHexString((int) loff, 4));
+					// parse all function in patch
+					parseAllFunctions2(getDic("patch"));
 
-					for (uint i = boff;i < dat.Length && i < loff;) {
-						dt("Parsing patch at " + toHexString((int) boff, 4));
-						// parse all function in patch
-						parseAllFunctions2(getDic("patch"));
-						// this simply marks all the bytes as unused. Not worth the headache to fix this properly
-						for (;i < boff;i ++) skippedBytes[i] = true;
-						// set counter to current offset
-						i = boff;
+					// mark all bytes as skipped
+					for(;x < boff;x++) {
+						skippedBytes[x] = true;
 					}
 				}
 			}
@@ -743,6 +729,13 @@ namespace smps2asm {
 				// change lable format
 				dx("~" + TranslateAllAbstract(((ChangeLable) value).lable));
 				lblparent = TranslateAllAbstract(((ChangeLable) value).lable);
+
+			} else if(value.GetType() == typeof(ArbLable)) {
+				// arbitary lable
+				uint v = (uint)parseLong(((ArbLable)value).off, -1);
+				string o = pickLable(v);
+				dx("^ " + v +' '+ o);
+				AddLable(v, o + ':');
 
 			} else if (value.GetType() == typeof(Comment)) {
 				// insert a comment
@@ -927,8 +920,12 @@ namespace smps2asm {
 		}
 
 		private static bool checkMacroArgs(Macro m) {
+			if(boff + m.requiredBytes() > dat.Length) {
+				return false;
+			}
+
 			byte[] bytes = new byte[m.requiredBytes()];
-			for(int i = 0;i < m.requiredBytes();i++) {
+			for(int i = 0;i < bytes.Length;i++) {
 				bytes[i] = ReadByte((uint)(boff + i));
 			}
 
@@ -991,8 +988,8 @@ namespace smps2asm {
 
 		private static string TranslateAllAbstract(string s) {
 			try {
-				while (s.Contains("/")) {
-					int i = s.IndexOf("/") + 1;
+				while (s.Contains(".")) {
+					int i = s.IndexOf(".") + 1;
 					string tr = TranslateAbstract(s.Substring(i, 2));
 					s = s.Substring(0, i - 1) + tr + s.Substring(i + 2, s.Length - i - 2);
 				}
@@ -1054,7 +1051,11 @@ namespace smps2asm {
 
 				case "ow":
 					boff += 2;
-					return ReadWordOff(boff - 2);
+					return ReadWordOff(boff - 2, -1);
+
+				case "rw":	// fucking Ristar piece of shit
+					boff += 2;
+					return ReadWordOff(boff - 2, 0);
 
 				case "hw":
 					boff += 2;
@@ -1076,6 +1077,39 @@ namespace smps2asm {
 					skipByte(boff++);
 					skipByte(boff++);
 					return "";
+
+				case "pc":
+					return "" + boff;
+
+				case "sz":
+					return "" + dat.Length;
+
+				case "of":
+					return "" + offset;
+
+				case "an": {
+						ulong off = (uint)dat.Length + offset;
+
+						foreach(OffsetString o in lables) {
+							if(o.offset > boff && o.offset < off) {
+								off = o.offset;
+								break;
+							}
+						}
+						return "" + off;
+					}
+
+				case "al": {
+						ulong off = 0;
+
+						foreach(OffsetString o in lables) {
+							if(o.offset <= boff && o.offset >= 0) {
+								off = o.offset;
+								break;
+							}
+						}
+						return "" + off;
+					}
 			}
 
 			error("Could not resolve argument '"+ s +"'");
@@ -1123,27 +1157,29 @@ namespace smps2asm {
 			string o = pickLable(pos);
 			AddLable(pos, o +':');
 
-			if (followlable && pos - offset >= boff) {
+			uint st = start;
+			if (followlable && ((pos - offset > boff) || (pos - offset < start))) {
 				uint coff = boff;
-				boff = pos - offset;
+				start = boff = pos - offset;
 				parseInput(currDics);
 				boff = coff;
 			}
 
+			start = st;
 			dt("Lable '" + o + "' from " + toHexString(boff + offset, 4) + " points to " + toHexString(pos, 4));
 			return o;
 		}
 
-		private static string ReadWordOff(uint off) {
+		private static string ReadWordOff(uint off, int mod) {
 			string endian = ((Equate) ((Dic) sett.GetValue("dat")).GetValue("endian")).raw;
 			ushort pos;
 			string lable = lblparent;
 
 			if (endian.Equals("\"little\"")) {
-				pos = (ushort) (boff + (ReadByte(off) | (ReadByte(off + 1) << 8)) - 1);
+				pos = (ushort) (boff + (ReadByte(off) | (ReadByte(off + 1) << 8)) + mod);
 
 			} else if (endian.Equals("\"big\"")) {
-				pos = (ushort) (boff + ((ReadByte(off) << 8) | ReadByte(off + 1)) - 1);
+				pos = (ushort) (boff + ((ReadByte(off) << 8) | ReadByte(off + 1)) + mod);
 
 			} else {
 				error("Could not resolve endianness '" + endian.Replace("\"", "") + "'");
@@ -1153,13 +1189,15 @@ namespace smps2asm {
 			string o = pickLable(pos);
 			AddLable(pos, o +':');
 
-			if (followlable && pos >= boff) {
+			uint st = start;
+			if (followlable && ((pos - offset > boff) || (pos - offset < start))) {
 				uint coff = boff;
-				boff = pos - offset;
+				start = boff = pos - offset;
 				parseInput(currDics);
 				boff = coff;
 			}
 
+			start = st;
 			dt("Lable '" + o + "' from " + toHexString(boff + offset, 4) + " points to " + toHexString(pos, 4));
 			return o;
 		}
@@ -1183,13 +1221,15 @@ namespace smps2asm {
 			string o = pickLable(pos);
 			AddLable(pos, o +':');
 
-			if (followlable && pos >= boff) {
+			uint st = start;
+			if (followlable && ((pos - offset > boff) || (pos - offset < start))) {
 				uint coff = boff;
-				boff = pos;
+				start = boff = pos;
 				parseInput(currDics);
 				boff = coff;
 			}
 
+			start = st;
 			dt("Lable '" + o + "' from " + toHexString(boff + offset, 4) + " points to " + toHexString(pos, 4));
 			return o;
 		}
@@ -1209,7 +1249,7 @@ namespace smps2asm {
 			}
 		}
 
-		private static string pickLable(ushort pos) {
+		private static string pickLable(uint pos) {
 			int x = 0;
 			while (hasLable(lblparent.Replace("#", "" + (++x)) + ':', pos)) {
 				if (!lblparent.Contains("#") || x > 100) {
@@ -1507,6 +1547,10 @@ namespace smps2asm {
 							} catch (Exception e) {
 								error("smps2asm script.asm:Line " + lnum + ": Can not add an item to Dictionary '" + stack.First.Value + "'! ", e);
 							}
+							break;
+
+						case '^':
+							stack.First.Value.Add("LABLE " + lnum, new ArbLable(line.Substring(2)));
 							break;
 
 						default:
