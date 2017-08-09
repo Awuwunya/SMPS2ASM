@@ -584,30 +584,36 @@ namespace smps2asm {
 			dt("Header parsed, parsing all found lables");
 
 			// parse all of the lables we found in header
-			foreach (OffsetString o in lables.ToArray()) {
-				Console.WriteLine("Parsing " + o.line + "...");
-				if (o.line.Contains("DAC")) {
-					// if DAC code, use DAC variables and command flags
-					start = boff = (uint) (o.offset - offset);
-					dt("Parsing DAC data '"+ o.line + "' at "+ toHexString(boff, 4));
-					parseInput(new Dic[] { getDic("comm"), getDic("DAC") });
+			// reversed so patches would be evaluated last
+			foreach(OffsetString o in lables.ToArray().Reverse()) {
+				if(o.offset - offset < 0 || o.offset - offset >= (ulong)dat.Length) {
+					Console.WriteLine("Not parsing " + o.line + ", is outside of the file...");
 
-				} else if (o.line.Contains("FM") || o.line.Contains("PSG")) {
-					// if FM or PSG code, use note variables and command flags
-					start = boff = (uint) (o.offset - offset);
-					dt("Parsing "+ (o.line.Contains("FM") ? "FM" : "PSG") +" data '" + o.line + "' at " + toHexString(boff, 4));
-					parseInput(new Dic[] { getDic("comm"), getDic("note") });
+				} else {
+					Console.WriteLine("Parsing " + o.line + "...");
+					if(o.line.Contains("DAC")) {
+						// if DAC code, use DAC variables and command flags
+						start = boff = (uint)(o.offset - offset);
+						dt("Parsing DAC data '" + o.line + "' at " + toHexString(boff, 4));
+						parseInput(new Dic[] { getDic("comm"), getDic("DAC") });
 
-				} else if (o.line.Contains("Patches")) {
-					// set current file offset, too
-					uint x = start = boff = (uint) (o.offset - offset);
-					dt("Parsing patch data '" + o.line + "' at " + toHexString((int) boff, 4));
-					// parse all function in patch
-					parseAllFunctions2(getDic("patch"));
+					} else if(o.line.Contains("FM") || o.line.Contains("PSG")) {
+						// if FM or PSG code, use note variables and command flags
+						start = boff = (uint)(o.offset - offset);
+						dt("Parsing " + (o.line.Contains("FM") ? "FM" : "PSG") + " data '" + o.line + "' at " + toHexString(boff, 4));
+						parseInput(new Dic[] { getDic("comm"), getDic("note") });
 
-					// mark all bytes as skipped
-					for(;x < boff;x++) {
-						skippedBytes[x] = true;
+					} else if(o.line.Contains("Patches")) {
+						// set current file offset, too
+						uint x = start = boff = (uint)(o.offset - offset);
+						dt("Parsing patch data '" + o.line + "' at " + toHexString((int)boff, 4));
+						// parse all function in patch
+						parseAllFunctions2(getDic("patch"));
+
+						// mark all bytes as skipped
+						for(;x < boff;x++) {
+							skippedBytes[x] = true;
+						}
 					}
 				}
 			}
@@ -1079,7 +1085,7 @@ namespace smps2asm {
 					return "";
 
 				case "pc":
-					return "" + boff;
+					return "" + (offset + boff);
 
 				case "sz":
 					return "" + dat.Length;
@@ -1091,9 +1097,8 @@ namespace smps2asm {
 						ulong off = (uint)dat.Length + offset;
 
 						foreach(OffsetString o in lables) {
-							if(o.offset > boff && o.offset < off) {
+							if(o.offset > boff + offset && o.offset < off) {
 								off = o.offset;
-								break;
 							}
 						}
 						return "" + off;
@@ -1596,7 +1601,14 @@ namespace smps2asm {
 		}
 
 		public static long parseLong(string s, int lnum) {
-			return Int64.Parse(parseNumber(s, lnum));
+			string a = parseNumber(s, lnum);
+			try {
+				return Int64.Parse(a);
+
+			} catch(Exception e) {
+				// dirty hack to get rid of some crap that may occur
+				return (long)Double.Parse(a);
+			}
 		}
 
 		public static bool parseBool(string s, int lnum) {

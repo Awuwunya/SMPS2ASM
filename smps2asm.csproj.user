@@ -3,7 +3,8 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|AnyCPU'">
     <StartAction>Project</StartAction>
     <StartWorkingDirectory>G:\tools\disasm\musicpla\bin</StartWorkingDirectory>
-    <StartArguments>"Chrome Gadget.bin" Sonic3K ChromeGadget 0xC324</StartArguments>
+    <StartArguments>
+    </StartArguments>
   </PropertyGroup>
   <PropertyGroup>
     <PublishUrlHistory>publish\</PublishUrlHistory>
